@@ -106,6 +106,11 @@ benchmark-gap:
 	-c ${KERNMLOPS_CONFIG_FILE} \
 	--benchmark gap
 
+benchmark-mongodb:
+	@python python/kernmlops collect -v \
+	-c ${KERNMLOPS_CONFIG_FILE} \
+	--benchmark mongodb
+
 benchmark-linux-build:
 	@python python/kernmlops collect -v \
 	-c ${KERNMLOPS_CONFIG_FILE} \

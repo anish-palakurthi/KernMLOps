@@ -13,28 +13,30 @@ from kernmlops_config import ConfigBase
 
 
 @dataclass(frozen=True)
-class GapBenchmarkConfig(ConfigBase):
-  gap_benchmark: Literal["pr"] = "pr"
-  trials: int = 2
+class BenchmarkConfig(ConfigBase):
+  
+  recordCount: int = 1000000
+  readProportion: float = 0.25
+  updateProportion: float =0.75
 
 
-class GapBenchmark(Benchmark):
+class MongoDbBenchmark(Benchmark):
 
     @classmethod
     def name(cls) -> str:
-        return "gap"
+        return "mongodb"
 
     @classmethod
     def default_config(cls) -> ConfigBase:
-        return GapBenchmarkConfig()
+        return BenchmarkConfig()
 
     @classmethod
     def from_config(cls, config: ConfigBase) -> "Benchmark":
         generic_config = cast(GenericBenchmarkConfig, getattr(config, "generic"))
-        gap_config = cast(GapBenchmarkConfig, getattr(config, cls.name()))
-        return GapBenchmark(generic_config=generic_config, config=gap_config)
+        gap_config = cast(BenchmarkConfig, getattr(config, cls.name()))
+        return MongoDbBenchmark(generic_config=generic_config, config=gap_config)
 
-    def __init__(self, *, generic_config: GenericBenchmarkConfig, config: GapBenchmarkConfig):
+    def __init__(self, *, generic_config: GenericBenchmarkConfig, config: BenchmarkConfig):
         self.generic_config = generic_config
         self.config = config
         self.benchmark_dir = self.generic_config.get_benchmark_dir() / self.name()
@@ -52,14 +54,13 @@ class GapBenchmark(Benchmark):
         if self.process is not None:
             raise BenchmarkRunningError()
 
-        print(str(self.benchmark_dir / self.config.gap_benchmark))
+        bash_file_path = self.benchmark_dir / "../run_mongodb.sh" # Add the path to your bash file here
+        print(bash_file_path)
         self.process = subprocess.Popen(
             [
-                str(self.benchmark_dir / self.config.gap_benchmark),
-                "-f",
-                str(self.benchmark_dir / "graphs" / "kron25.sg"),
-                "-n",
-                str(self.config.trials),
+                "bash",
+                bash_file_path,
+                
             ],
             preexec_fn=demote(),
             stdout=subprocess.DEVNULL,
