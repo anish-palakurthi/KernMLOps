@@ -187,6 +187,25 @@ docker:
 	${IMAGE_NAME}:${VERSION} \
 	${CONTAINER_CMD} || true
 
+# Benchmark Installation commands
+
+# Must be run before using any ycsb benchmark (once)
+install-ycsb:
+	@echo "Installing ycsb..."
+	@source scripts/setup-benchmarks/install_ycsb.sh
+
+# Must be run before using any mongodb benchmark (once)
+install-mongodb:
+	@echo "Installing mongodb benchmark..."
+	@source scripts/setup-benchmarks/install_mongodb.sh
+
+# Must be run before using the MongoDB benchmark each time YCSB target benchmark is changed
+load-mongodb:
+	@echo "Running YCSB load..."
+	${YCSB_PATH}/bin/ycsb load mongodb -s -P workloads/workloada \
+		-p recordcount=1000000 \
+		-p mongodb.url=mongodb://localhost:27017/ycsb \
+		-p mongodb.writeConcern=acknowledged
 
 # Miscellaneous commands
 clean-docker-images:

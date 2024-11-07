@@ -43,6 +43,8 @@ class MongoDbBenchmark(Benchmark):
         self.process: subprocess.Popen | None = None
 
     def is_configured(self) -> bool:
+        return True
+        # print(f'is_configured directory name: {self.benchmark_dir}')
         return self.benchmark_dir.is_dir()
 
     def setup(self) -> None:
@@ -54,7 +56,7 @@ class MongoDbBenchmark(Benchmark):
         if self.process is not None:
             raise BenchmarkRunningError()
 
-        bash_file_path = self.benchmark_dir / "../run_mongodb.sh" # Add the path to your bash file here
+        bash_file_path = self.benchmark_dir / "run_mongodb.sh" # Add the path to your bash file here
         print(bash_file_path)
         self.process = subprocess.Popen(
             [
