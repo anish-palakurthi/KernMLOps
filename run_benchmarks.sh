@@ -1,22 +1,14 @@
 #!/bin/bash
 
-apt-get update && apt-get install -y openjdk-11-jdk && echo 'export PATH=$PATH:/usr/lib/jvm/java-11-openjdk-amd64/bin' >> ~/.bashrc && source ~/.bashrc
-
 # Update and install required packages
-apt update
+sudo apt-get update
+sudo apt-get install -y openjdk-11-jdk redis-server memcached netcat xz-utils mongodb-org curl gnupg
 
 # Download YCSB
 curl -O --location https://github.com/brianfrankcooper/YCSB/releases/download/0.17.0/ycsb-0.17.0.tar.gz
 tar xfvz ycsb-0.17.0.tar.gz
 cd ycsb-0.17.0
 
-pwd
-
-export YCSB_HOME=$(pwd)
-
-
-# Replace the bin/ycsb script
-# Replace the bin/ycsb script
 cat << 'EOF' > bin/ycsb
 #!/usr/bin/python3
 #
@@ -362,41 +354,102 @@ if __name__ == '__main__':
     sys.exit(main())
 EOF
 
-# Make the ycsb script executable
-chmod +x bin/ycsb
+# Configure and start services
+echo "Configuring services..."
 
-# Import MongoDB public GPG Key
-apt-get install gnupg curl
-curl -fsSL https://pgp.mongodb.com/server-6.0.asc | \
-   gpg -o /usr/share/keyrings/mongodb-server-6.0.gpg --dearmor
+# Configure memcached
+sudo sh -c 'echo "MEMCACHED_MEMORY=2048" > /etc/default/memcached'
+sudo sh -c 'echo "-c 1024" >> /etc/memcached.conf'
+sudo sh -c 'echo "-t 4" >> /etc/memcached.conf'
 
-# Create the list file /etc/apt/sources.list.d/mongodb-org-6.0.list
-echo "deb [ arch=amd64,arm64 signed-by=/usr/share/keyrings/mongodb-server-6.0.gpg ] https://repo.mongodb.org/apt/ubuntu jammy/mongodb-org/6.0 multiverse" |
- tee /etc/apt/sources.list.d/mongodb-org-6.0.list
+# Start and enable services
+sudo systemctl start memcached
+sudo systemctl enable memcached
+sudo systemctl start redis-server
+sudo systemctl enable redis-server
+sudo systemctl start mongod
+sudo systemctl enable mongod
 
-apt-get update
-apt-get install -y mongodb-org
-
-
-mkdir -p /data/db
-
-# Start MongoDB server
-mongod --dbpath /data/db --fork --logpath /var/log/mongodb.log
-
-# systemctl start mongod
-# systemctl enable mongod
-
-# sudo systemctl status mongod
-
-# Run YCSB load and run mongodb commands
-./bin/ycsb load mongodb -s -P workloads/workloada \
-    -p recordcount=1000000 \
-    -p mongodb.url=mongodb://localhost:27017/ycsb \
-    -p mongodb.writeConcern=acknowledged
+# Function to run compression benchmark
+run_compression_benchmark() {
+    echo "Running XZ Compression Benchmark..."
     
-# ./bin/ycsb run mongodb -s -P workloads/workloada \
-#     -p operationcount=1000000 \
-#     -p mongodb.url=mongodb://localhost:27017/ycsb \
-#     -p readproportion=0.25 \
-#     -p updateproportion=0.75 \
-#     -p mongodb.writeConcern=acknowledged
+    # Create test directory
+    mkdir -p compression_benchmark
+    cd compression_benchmark
+    
+    # Create 1GB test file
+    echo "Creating 1GB test file..."
+    dd if=/dev/urandom of=testfile bs=1M count=1024
+    
+    # Run compression test
+    echo "Running compression test..."
+    time xz -9 -T $(nproc) testfile
+    
+    # Run decompression test
+    echo "Running decompression test..."
+    time xz -d -T $(nproc) testfile.xz
+    
+    cd ..
+    echo "Compression benchmark completed."
+}
+
+# Function to run memcached benchmark
+run_memcached_benchmark() {
+    echo "Running Memcached Benchmark..."
+    ./bin/ycsb load memcached -s -P workloads/workloada \
+        -p recordcount=1000000 \
+        -p memcached.hosts=localhost \
+        -p memcached.port=11211 \
+        -p memcached.shutdownTimeoutMillis=30000 \
+        -p memcached.opTimeout=60000
+
+    ./bin/ycsb run memcached -s -P workloads/workloada \
+        -p operationcount=1000000 \
+        -p memcached.hosts=localhost \
+        -p memcached.port=11211 \
+        -p readproportion=0.99 \
+        -p updateproportion=0.01 \
+        -p memcached.shutdownTimeoutMillis=30000 \
+        -p memcached.opTimeout=60000 \
+        -p maxexecutiontime=600
+}
+
+# Function to run MongoDB benchmark
+run_mongodb_benchmark() {
+    echo "Running MongoDB Benchmark..."
+    ./bin/ycsb load mongodb -s -P workloads/workloada \
+        -p recordcount=1000000 \
+        -p mongodb.url=mongodb://localhost:27017/ycsb \
+        -p mongodb.writeConcern=acknowledged
+    
+    ./bin/ycsb run mongodb -s -P workloads/workloada \
+        -p operationcount=1000000 \
+        -p mongodb.url=mongodb://localhost:27017/ycsb \
+        -p readproportion=0.25 \
+        -p updateproportion=0.75 \
+        -p mongodb.writeConcern=acknowledged
+}
+
+# Function to run Redis benchmark
+run_redis_benchmark() {
+    echo "Running Redis Benchmark..."
+    ./bin/ycsb load redis -s -P workloads/workloada -p recordcount=1000000
+    ./bin/ycsb run redis -s -P workloads/workloada \
+        -p operationcount=1000000 \
+        -p redis.host=localhost \
+        -p redis.port=6379 \
+        -p readproportion=0.5 \
+        -p updateproportion=0.5
+}
+
+# Main benchmark execution
+echo "Starting Combined Benchmark Suite..."
+
+# Run all benchmarks
+run_compression_benchmark
+run_memcached_benchmark
+run_mongodb_benchmark
+run_redis_benchmark
+
+echo "All benchmarks completed."
