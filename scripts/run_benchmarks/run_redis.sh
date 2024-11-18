@@ -1,18 +1,17 @@
 #!/bin/bash
 
-apt-get update && apt-get install -y openjdk-11-jdk && echo 'export PATH=$PATH:/usr/lib/jvm/java-11-openjdk-amd64/bin' >>~/.bashrc && source ~/.bashrc
-
 # Update and install required packages
-apt update
+sudo apt update
+sudo apt install -y openjdk-11-jdk redis-server curl
+
+# Start Redis server
+sudo systemctl start redis-server
+sudo systemctl enable redis-server
 
 # Download YCSB
 curl -O --location https://github.com/brianfrankcooper/YCSB/releases/download/0.17.0/ycsb-0.17.0.tar.gz
 tar xfvz ycsb-0.17.0.tar.gz
 cd ycsb-0.17.0
-
-pwd
-
-export YCSB_HOME=$(pwd)
 
 # Replace the bin/ycsb script
 # Replace the bin/ycsb script
@@ -364,30 +363,6 @@ EOF
 # Make the ycsb script executable
 chmod +x bin/ycsb
 
-# Import MongoDB public GPG Key
-apt-get install gnupg curl
-curl -fsSL https://pgp.mongodb.com/server-6.0.asc |
-    gpg -o /usr/share/keyrings/mongodb-server-6.0.gpg --dearmor
-
-# Create the list file /etc/apt/sources.list.d/mongodb-org-6.0.list
-echo "deb [ arch=amd64,arm64 signed-by=/usr/share/keyrings/mongodb-server-6.0.gpg ] https://repo.mongodb.org/apt/ubuntu jammy/mongodb-org/6.0 multiverse" |
-    tee /etc/apt/sources.list.d/mongodb-org-6.0.list
-
-apt-get update
-apt-get install -y mongodb-org
-
-mkdir -p /data/db
-
-# Start MongoDB server
-mongod --dbpath /data/db --fork --logpath /var/log/mongodb.log
-
-# systemctl start mongod
-# systemctl enable mongod
-
-# sudo systemctl status mongod
-
-# Run YCSB load and run mongodb commands
-./bin/ycsb load mongodb -s -P workloads/workloada \
-    -p recordcount=1000000 \
-    -p mongodb.url=mongodb://localhost:27017/ycsb \
-    -p mongodb.writeConcern=acknowledged
+# Run YCSB load and run redis commands
+./bin/ycsb load redis -s -P workloads/workloada -p recordcount=1000000
+./bin/ycsb run redis -s -P workloads/workloada -p operationcount=1000000 -p redis.host=localhost -p redis.port=6379 -p readproportion=0.5 -p updateproportion=0.5

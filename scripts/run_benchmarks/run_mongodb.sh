@@ -2,20 +2,17 @@
 
 # Update and install required packages
 sudo apt update
-sudo apt install -y openjdk-11-jdk redis-server curl
-
-# Start Redis server
-sudo systemctl start redis-server
-sudo systemctl enable redis-server
 
 # Download YCSB
 curl -O --location https://github.com/brianfrankcooper/YCSB/releases/download/0.17.0/ycsb-0.17.0.tar.gz
 tar xfvz ycsb-0.17.0.tar.gz
 cd ycsb-0.17.0
 
+export YCSB_HOME=$(pwd)
+
 # Replace the bin/ycsb script
 # Replace the bin/ycsb script
-cat << 'EOF' > bin/ycsb
+cat <<'EOF' >bin/ycsb
 #!/usr/bin/python3
 #
 # Copyright (c) 2012 - 2015 YCSB contributors. All rights reserved.
@@ -334,7 +331,7 @@ def main():
         # TODO when we have a version property, skip the glob
         cp = find_jars(os.path.join(db_dir, "target"),
                     project + "*.jar")
-        # alredy in jar:jar:jar form
+        # already in jar:jar:jar form
         cp.append(maven_says)
     cp.insert(0, os.path.join(db_dir, "conf"))
     classpath = os.pathsep.join(cp)
@@ -363,8 +360,31 @@ EOF
 # Make the ycsb script executable
 chmod +x bin/ycsb
 
-# Run YCSB load and run redis commands
-./bin/ycsb load redis -s -P workloads/workloada -p recordcount=1000000
-./bin/ycsb run redis -s -P workloads/workloada -p operationcount=1000000 -p redis.host=localhost -p redis.port=6379 -p readproportion=0.5 -p updateproportion=0.5
+# Import MongoDB public GPG Key
+sudo apt-get install gnupg curl
+curl -fsSL https://pgp.mongodb.com/server-6.0.asc |
+    sudo gpg -o /usr/share/keyrings/mongodb-server-6.0.gpg --dearmor
 
+# Create the list file /etc/apt/sources.list.d/mongodb-org-6.0.list
+echo "deb [ arch=amd64,arm64 signed-by=/usr/share/keyrings/mongodb-server-6.0.gpg ] https://repo.mongodb.org/apt/ubuntu jammy/mongodb-org/6.0 multiverse" | sudo tee /etc/apt/sources.list.d/mongodb-org-6.0.list
 
+sudo apt-get update
+sudo apt-get install -y mongodb-org
+
+sudo systemctl start mongod
+sudo systemctl enable mongod
+
+# sudo systemctl status mongod
+
+# Run YCSB load and run mongodb commands
+./bin/ycsb load mongodb -s -P workloads/workloada \
+    -p recordcount=1000000 \
+    -p mongodb.url=mongodb://localhost:27017/ycsb \
+    -p mongodb.writeConcern=acknowledged
+
+./bin/ycsb run mongodb -s -P workloads/workloada \
+    -p operationcount=1000000 \
+    -p mongodb.url=mongodb://localhost:27017/ycsb \
+    -p readproportion=0.25 \
+    -p updateproportion=0.75 \
+    -p mongodb.writeConcern=acknowledged

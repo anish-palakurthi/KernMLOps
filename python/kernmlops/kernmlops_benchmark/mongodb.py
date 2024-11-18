@@ -1,6 +1,6 @@
 import subprocess
 from dataclasses import dataclass
-from typing import Literal, cast
+from typing import cast
 
 from data_schema import GraphEngine, demote
 from kernmlops_benchmark.benchmark import Benchmark, GenericBenchmarkConfig
@@ -13,11 +13,10 @@ from kernmlops_config import ConfigBase
 
 
 @dataclass(frozen=True)
-class BenchmarkConfig(ConfigBase):
-  
-  recordCount: int = 1000000
+class MongoDbConfig(ConfigBase):
+  record_count: int = 1000000
   readProportion: float = 0.25
-  updateProportion: float =0.75
+  updateProportion: float = 0.75
 
 
 class MongoDbBenchmark(Benchmark):
@@ -28,15 +27,15 @@ class MongoDbBenchmark(Benchmark):
 
     @classmethod
     def default_config(cls) -> ConfigBase:
-        return BenchmarkConfig()
+        return MongoDbConfig()
 
     @classmethod
     def from_config(cls, config: ConfigBase) -> "Benchmark":
         generic_config = cast(GenericBenchmarkConfig, getattr(config, "generic"))
-        gap_config = cast(BenchmarkConfig, getattr(config, cls.name()))
-        return MongoDbBenchmark(generic_config=generic_config, config=gap_config)
+        mongodb_config = cast(MongoDbConfig, getattr(config, cls.name()))
+        return MongoDbBenchmark(generic_config=generic_config, config=mongodb_config)
 
-    def __init__(self, *, generic_config: GenericBenchmarkConfig, config: BenchmarkConfig):
+    def __init__(self, *, generic_config: GenericBenchmarkConfig, config: MongoDbConfig):
         self.generic_config = generic_config
         self.config = config
         self.benchmark_dir = self.generic_config.get_benchmark_dir() / self.name()
@@ -56,13 +55,14 @@ class MongoDbBenchmark(Benchmark):
         if self.process is not None:
             raise BenchmarkRunningError()
 
-        bash_file_path = self.benchmark_dir / "run_mongodb.sh" # Add the path to your bash file here
-        print(bash_file_path)
+        bash_file_path = "../scripts/run_benchmarks/run_mongodb.sh"
         self.process = subprocess.Popen(
             [
                 "bash",
-                bash_file_path,
-                
+                str(bash_file_path),
+                str(self.config.record_count),
+                str(self.config.readProportion),
+                str(self.config.updateProportion)
             ],
             preexec_fn=demote(),
             stdout=subprocess.DEVNULL,

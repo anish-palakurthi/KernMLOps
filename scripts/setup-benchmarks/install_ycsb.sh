@@ -12,7 +12,7 @@ echo $YCSB_HOME
 
 # Replace the bin/ycsb script
 # Replace the bin/ycsb script
-cat << 'EOF' > bin/ycsb
+cat <<'EOF' >bin/ycsb
 #!/usr/bin/python3
 #
 # Copyright (c) 2012 - 2015 YCSB contributors. All rights reserved.
@@ -331,7 +331,7 @@ def main():
         # TODO when we have a version property, skip the glob
         cp = find_jars(os.path.join(db_dir, "target"),
                     project + "*.jar")
-        # alredy in jar:jar:jar form
+        # already in jar:jar:jar form
         cp.append(maven_says)
     cp.insert(0, os.path.join(db_dir, "conf"))
     classpath = os.pathsep.join(cp)
