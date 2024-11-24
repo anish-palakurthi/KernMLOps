@@ -87,4 +87,3 @@ class MongoDbBenchmark(Benchmark):
     def plot_events(cls, graph_engine: GraphEngine) -> None:
         if graph_engine.collection_data.benchmark != cls.name():
             raise BenchmarkNotInCollectionData()
-        # TODO(Patrick): plot when a trial starts/ends
