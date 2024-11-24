@@ -192,10 +192,8 @@ docker:
 # Must be run before using any ycsb benchmark (once)
 install-ycsb:
 	@echo "Installing ycsb..."
-	@source scripts/setup-benchmarks/install_ycsb.sh
-	export YCSB_HOME=/KernMLOps/ycsb-0.17.0
+	@sudo sh scripts/setup-benchmarks/install_ycsb.sh
 
-export YCSB_HOME=/KernMLOps/ycsb-0.17.0
 
 # Must be run before using any mongodb benchmark (once)
 install-mongodb:

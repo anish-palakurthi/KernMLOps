@@ -55,7 +55,7 @@ class MongoDbBenchmark(Benchmark):
         if self.process is not None:
             raise BenchmarkRunningError()
 
-        bash_file_path = "../scripts/run_benchmarks/run_mongodb.sh"
+        bash_file_path = "scripts/run_benchmarks/run_mongodb.sh"
         self.process = subprocess.Popen(
             [
                 "bash",
