@@ -1,14 +1,3 @@
-#!/bin/bash
-
-# Update and install required packages
-sudo apt update
-
-# Download YCSB
-curl -O --location https://github.com/brianfrankcooper/YCSB/releases/download/0.17.0/ycsb-0.17.0.tar.gz
-tar xfvz ycsb-0.17.0.tar.gz
-cd ycsb-0.17.0
-
-cat <<'EOF' >bin/ycsb
 #!/usr/bin/python3
 #
 # Copyright (c) 2012 - 2015 YCSB contributors. All rights reserved.
@@ -27,14 +16,14 @@ cat <<'EOF' >bin/ycsb
 # LICENSE file.
 #
 
+import argparse
 import errno
 import fnmatch
 import io
 import os
 import shlex
-import sys
 import subprocess
-import argparse
+import sys
 
 BASE_URL = "https://github.com/brianfrankcooper/YCSB/tree/master/"
 COMMANDS = {
@@ -351,45 +340,3 @@ def main():
 
 if __name__ == '__main__':
     sys.exit(main())
-EOF
-
-# Install and configure memcached
-sudo apt-get update
-sudo apt-get install -y memcached netcat
-
-# Configure memcached
-sudo sh -c 'echo "MEMCACHED_MEMORY=2048" > /etc/default/memcached'
-sudo sh -c 'echo "-c 1024" >> /etc/memcached.conf'
-sudo sh -c 'echo "-t 4" >> /etc/memcached.conf'
-
-# Restart memcached with new configuration
-sudo systemctl restart memcached
-sudo systemctl enable memcached
-
-# Verify memcached status
-# echo 'stats' | nc localhost 11211
-# echo 'version' | nc localhost 11211
-
-# # Check memory status
-# free -m
-# cat /proc/meminfo | grep Mem
-# echo "stats" | nc localhost 11211 | grep bytes
-
-# Run YCSB load and run memcached commands
-./bin/ycsb load memcached -s -P workloads/workloada \
-    -p recordcount=1000000 \
-    -p memcached.hosts=localhost \
-    -p memcached.port=11211 \
-    -p memcached.shutdownTimeoutMillis=30000 \
-    -p memcached.opTimeout=60000
-
-./bin/ycsb run memcached -s -P workloads/workloada \
-    -p operationcount=1000000 \
-    -p memcached.hosts=localhost \
-    -p memcached.port=11211 \
-    -p readproportion=0.99 \
-    -p updateproportion=0.01 \
-    -p memcached.shutdownTimeoutMillis=30000 \
-    -p memcached.opTimeout=60000 \
-    -p maxexecutiontime=600
-# -threads 8
