@@ -60,10 +60,7 @@ RUN apt-get update && \
     apt-get clean && \
     rm -rf /var/lib/apt/lists/*
 
-# Install OpenJDK 11
-RUN apt-get update && \
-    apt-get install -y openjdk-11-jdk && \
-    echo 'export PATH=$PATH:/usr/lib/jvm/java-11-openjdk-amd64/bin' >> /root/.bashrc
+
 
 # Base development image
 FROM ${BUILD_IMAGE} AS dev
@@ -101,6 +98,9 @@ RUN echo "export SRC_DIR=${SRC_DIR}" >> /root/.profile
 RUN echo "export UNAME=${UNAME}" >> /root/.profile
 RUN echo "export GID=${GID}" >> /root/.profile
 RUN echo "export LIB_PFM4_DIR=/dependencies/libpfm4" >> /root/.profile
+RUN apt-get update && \
+    apt-get install -y openjdk-11-jdk && \
+    echo 'export PATH=$PATH:/usr/lib/jvm/java-11-openjdk-amd64/bin' >> /root/.profile
 
 WORKDIR /home/${UNAME}
 
