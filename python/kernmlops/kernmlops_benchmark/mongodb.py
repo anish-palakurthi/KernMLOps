@@ -55,14 +55,24 @@ class MongoDbBenchmark(Benchmark):
         if self.process is not None:
             raise BenchmarkRunningError()
 
-        bash_file_path = "scripts/run_benchmarks/run_mongodb.sh"
         self.process = subprocess.Popen(
             [
-                "bash",
-                str(bash_file_path),
-                str(self.config.record_count),
-                str(self.config.readProportion),
-                str(self.config.updateProportion)
+                "./ycsb-0.17.0/bin/ycsb",
+                "run",
+                "mongodb",
+                "-s",
+                "-P",
+                "./ycsb-0.17.0/workloads/workloada",
+                "-p",
+                f"operationcount={self.config.record_count}",
+                "-p",
+                "mongodb.url=mongodb://localhost:27017/ycsb",
+                "-p",
+                f"readproportion={self.config.readProportion}",
+                "-p",
+                f"updateproportion={self.config.updateProportion}",
+                "-p",
+                "mongodb.writeConcern=acknowledged"
             ],
             preexec_fn=demote(),
             stdout=subprocess.DEVNULL,
