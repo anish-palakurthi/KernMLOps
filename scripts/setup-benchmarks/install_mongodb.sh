@@ -1,4 +1,8 @@
 #!/bin/bash
+if [ -d "/data/db" ]; then
+    echo "Directory /data/db already exists."
+    exit 0
+fi
 mkdir -p /data/db
 
 # Start MongoDB server without sysctl

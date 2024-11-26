@@ -191,7 +191,7 @@ docker:
 
 install-ycsb:
 	@echo "Installing ycsb..."
-	@sudo sh scripts/setup-benchmarks/install_ycsb.sh
+	@source scripts/setup-benchmarks/install_ycsb.sh
 
 install-mongodb:
 	@echo "Installing mongodb benchmark..."

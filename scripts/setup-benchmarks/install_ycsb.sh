@@ -1,13 +1,27 @@
-# Update and install required packages
-apt update
+#Specify destination for benchmark
+YCSB_BENCHMARK_NAME="ycsb"
+BENCHMARK_DIR_NAME="kernmlops-benchmark"
+
+BENCHMARK_DIR="${BENCHMARK_DIR:-$HOME/$BENCHMARK_DIR_NAME}"
+YCSB_BENCHMARK_DIR="$BENCHMARK_DIR/$YCSB_BENCHMARK_NAME"
+
+if [ -d $YCSB_BENCHMARK_DIR ]; then
+    echo "Benchmark already installed at: $YCSB_BENCHMARK_DIR"
+    exit 0
+fi
+
+# Setup
+mkdir -p "$YCSB_BENCHMARK_DIR"
 
 # Download YCSB
-curl -O --location https://github.com/brianfrankcooper/YCSB/releases/download/0.17.0/ycsb-0.17.0.tar.gz
+curl -o "$YCSB_BENCHMARK_DIR/ycsb-0.17.0.tar.gz" --location https://github.com/brianfrankcooper/YCSB/releases/download/0.17.0/ycsb-0.17.0.tar.gz
+cd "$YCSB_BENCHMARK_DIR" || exit
+
 tar xfvz ycsb-0.17.0.tar.gz
-cd ycsb-0.17.0
+cd ycsb-0.17.0 || exit
 
 # Copy contents of ycsb_runner.py to bin/ycsb
-sudo cp ../scripts/setup-benchmarks/ycsb_runner.py bin/ycsb
+cp ../scripts/setup-benchmarks/ycsb_runner.py bin/ycsb
 
 # Make the ycsb script executable
 chmod +x bin/ycsb
