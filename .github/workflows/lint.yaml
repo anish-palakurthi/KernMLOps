@@ -1,0 +1,40 @@
+name: Lint / Pre-commit
+run-name: lint pre-commit performed by @${{ github.triggering_actor }}
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+  # Allows you to run this workflow manually from the Actions tab
+  workflow_dispatch:
+
+# Only the latest workflow run is allowed to run for each PR / branch
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout 🛎️
+        uses: actions/checkout@v4
+      # Cache python dependencies using "requirements.txt" as the cache key
+      - name: Cache Dependencies 📂
+        uses: actions/cache@v3
+        with:
+          path: ./.venv/
+          key: ${{ runner.os }}-venv-${{ hashFiles('**/requirements.txt') }}
+          restore-keys: |
+            ${{ runner.os }}-venv-
+      # Install python dependencies only if cache was not hit
+      # `--system-site-packages` argument is used to allow access to system site packages (e.g., bcc)
+      - name: Install Dependencies 📦
+        run: python -m venv --system-site-packages ./.venv && . ./.venv/bin/activate && pip install -r requirements.txt
+        if: steps.cache-venv.outputs.cache-hit != 'true'
+      - name: Run Ruff Linter 🚨
+        run: . ./.venv/bin/activate && make lint
+      - name: Run pre-commit hooks
+        run: . ./.venv/bin/activate && make hooks && make pre-commit
