@@ -38,7 +38,7 @@ class MongoDbBenchmark(Benchmark):
     def __init__(self, *, generic_config: GenericBenchmarkConfig, config: MongoDbConfig):
         self.generic_config = generic_config
         self.config = config
-        self.benchmark_dir = self.generic_config.get_benchmark_dir() / self.name()
+        self.benchmark_dir = self.generic_config.get_benchmark_dir() / "ycsb"
         self.process: subprocess.Popen | None = None
 
     def is_configured(self) -> bool:
@@ -57,12 +57,12 @@ class MongoDbBenchmark(Benchmark):
 
         self.process = subprocess.Popen(
             [
-                "./ycsb-0.17.0/bin/ycsb",
+                f"{self.benchmark_dir}/ycsb-0.17.0/bin/ycsb",
                 "run",
                 "mongodb",
                 "-s",
                 "-P",
-                "./ycsb-0.17.0/workloads/workloada",
+                f"{self.benchmark_dir}/ycsb-0.17.0/workloads/workloada",
                 "-p",
                 f"operationcount={self.config.record_count}",
                 "-p",

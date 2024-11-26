@@ -15,13 +15,13 @@ mkdir -p "$YCSB_BENCHMARK_DIR"
 
 # Download YCSB
 curl -o "$YCSB_BENCHMARK_DIR/ycsb-0.17.0.tar.gz" --location https://github.com/brianfrankcooper/YCSB/releases/download/0.17.0/ycsb-0.17.0.tar.gz
-cd "$YCSB_BENCHMARK_DIR" || exit
 
-tar xfvz ycsb-0.17.0.tar.gz
-cd ycsb-0.17.0 || exit
+tar xfvz "$YCSB_BENCHMARK_DIR/ycsb-0.17.0.tar.gz" -C "$YCSB_BENCHMARK_DIR"
+
+pwd
 
 # Copy contents of ycsb_runner.py to bin/ycsb
-cp ../scripts/setup-benchmarks/ycsb_runner.py bin/ycsb
+cp scripts/setup-benchmarks/ycsb_runner.py $YCSB_BENCHMARK_DIR/ycsb-0.17.0/bin/ycsb
 
 # Make the ycsb script executable
-chmod +x bin/ycsb
+chmod +x $YCSB_BENCHMARK_DIR/ycsb-0.17.0/bin/ycsb
