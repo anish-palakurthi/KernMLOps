@@ -26,75 +26,100 @@ def load_single_data_source(file_path, source_name):
     table = pq.read_table(file_path)
     df = table.to_pandas()
     print(f"{source_name} data shape: {df.shape}")
+    print(f"{source_name} columns: {df.columns.tolist()}")
 
     # Convert object columns to numeric if possible
     # for col in df.columns:
-        # if df[col].dtype == 'object':
-            # try:
-            #     df[col] = pd.to_numeric(df[col], errors='coerce')
-            #     print(f"Converted column {col} from object to numeric")
-            # except:
-            #     print(f"Could not convert column {col} to numeric")
+    #     if df[col].dtype == 'object':
+    #         try:
+    #             df[col] = pd.to_numeric(df[col], errors='coerce')
+    #             print(f"Converted column {col} from object to numeric")
+    #         except:
+    #             print(f"Could not convert column {col} to numeric")
 
     return df
 
-def process_memory_data(mem_df):
+def process_rss_data(rss_df):
     """
-    Process memory data for modeling
+    Process RSS data for modeling
     """
-    # Convert memory columns to MB
-    memory_cols = []
-    for col in mem_df.columns:
-        if 'bytes' in col:
-            try:
-                new_col = f"{col}_mb"
-                mem_df[new_col] = mem_df[col] / (1024 * 1024)
-                memory_cols.append(new_col)
-            except Exception as e:
-                print(f"Error converting {col} to MB: {e}")
+    # Convert timestamp from ns to sec for easier handling
+    if 'ts_ns' in rss_df.columns:
+        rss_df['time_sec'] = rss_df['ts_ns'] / 1e9
+        print("Converted timestamp from ns to sec")
 
-    print(f"Created {len(memory_cols)} memory columns in MB")
+    # Sort by timestamp to ensure we can find most recent values later
+    rss_df = rss_df.sort_values('time_sec')
 
-    # Identify target column
+    # Identify potential target columns for RSS data
+    rss_cols = []
+    for col in ['anon', 'file', 'swap', 'shmem']:
+        if col in rss_df.columns:
+            # Check if it has variance
+            if rss_df[col].std() > 0:
+                rss_cols.append(col)
+                print(f"Found RSS column with variance: {col}")
+
+    # Select target column - anon is often the most interesting
     target_col = None
-    target_candidates = [
-        'mem_available_bytes_mb',
-        'mem_free_bytes_mb',
-        'cached_bytes_mb'
-    ]
+    target_candidates = ['anon', 'file', 'shmem', 'swap']
 
     for col in target_candidates:
-        if col in mem_df.columns:
-            # Check if it has some variance
-            if mem_df[col].std() > 0:
-                target_col = col
-                break
+        if col in rss_cols:
+            target_col = col
+            break
 
-    # If no suitable target found, use the first memory column with non-zero variance
-    if target_col is None:
-        for col in memory_cols:
-            if mem_df[col].std() > 0:
-                target_col = col
-                break
+    if target_col is None and rss_cols:
+        target_col = rss_cols[0]
 
     if target_col:
         print(f"Selected target column: {target_col}")
     else:
         print("Warning: No suitable target column found with variance")
-        # Use the first memory column anyway
-        if memory_cols:
-            target_col = memory_cols[0]
+        return rss_df, None, []
 
-    # Identify feature columns
-    feature_cols = [col for col in memory_cols if col != target_col]
+    # Feature columns are the other RSS metrics
+    feature_cols = [col for col in rss_cols if col != target_col]
 
-    return mem_df, target_col, feature_cols
+    # Convert to MB if values are large (likely in bytes)
+    # Check first value to determine scale
+    for col in rss_cols:
+        mean_val = rss_df[col].mean()
+        if mean_val > 10000:  # Likely in bytes or KB
+            if mean_val > 1000000:  # Likely bytes
+                rss_df[f"{col}_mb"] = rss_df[col] / (1024 * 1024)
+                print(f"Converted {col} from bytes to MB")
+                # Update target and feature columns
+                if col == target_col:
+                    target_col = f"{col}_mb"
+                if col in feature_cols:
+                    feature_cols.remove(col)
+                    feature_cols.append(f"{col}_mb")
+            else:  # Likely KB
+                rss_df[f"{col}_mb"] = rss_df[col] / 1024
+                print(f"Converted {col} from KB to MB")
+                # Update target and feature columns
+                if col == target_col:
+                    target_col = f"{col}_mb"
+                if col in feature_cols:
+                    feature_cols.remove(col)
+                    feature_cols.append(f"{col}_mb")
+
+    return rss_df, target_col, feature_cols
 
 def process_tlb_data(tlb_df, tlb_type):
     """
     Process TLB data for modeling
     """
-    # Identify the TLB miss column
+    # Convert timestamp to seconds if needed
+    if 'ts_uptime_us' in tlb_df.columns:
+        tlb_df['time_sec'] = tlb_df['ts_uptime_us'] / 1e6
+        print(f"Converted {tlb_type} timestamp from us to sec")
+
+    # Sort by timestamp
+    tlb_df = tlb_df.sort_values('time_sec')
+
+    # Identify TLB miss columns
     tlb_cols = []
     for col in tlb_df.columns:
         col_lower = col.lower()
@@ -105,10 +130,11 @@ def process_tlb_data(tlb_df, tlb_type):
 
     print(f"Found {len(tlb_cols)} {tlb_type} columns with variance")
 
-    # Choose the main TLB miss column
+    # Choose main TLB miss column (prefer cumulative/total)
     main_tlb_col = None
     for col in tlb_cols:
-        if 'cumulative' in col.lower() or 'total' in col.lower():
+        col_lower = col.lower()
+        if 'cumulative' in col_lower or 'total' in col_lower:
             main_tlb_col = col
             break
 
@@ -118,79 +144,114 @@ def process_tlb_data(tlb_df, tlb_type):
 
     if main_tlb_col:
         print(f"Selected {tlb_type} column: {main_tlb_col}")
-        # Create a more clearly named column
+        # Create clearly named column
         tlb_df[f'{tlb_type}_misses'] = tlb_df[main_tlb_col]
         return tlb_df, [f'{tlb_type}_misses']
     else:
         print(f"Warning: No suitable {tlb_type} column found")
         return tlb_df, []
 
-def simple_time_align(mem_df, dtlb_df, itlb_df):
+def efficient_data_integration(rss_df, dtlb_df, itlb_df):
     """
-    Simple time alignment based on nearest timestamps
+    Uses TLB timestamp as reference, finds most recent RSS value at each TLB timestamp
     """
-    # Ensure all dataframes have timestamps in seconds
-    for df, name in [(mem_df, 'memory'), (dtlb_df, 'dtlb'), (itlb_df, 'itlb')]:
-        if df is not None and 'ts_uptime_us' in df.columns:
-            df['time_sec'] = df['ts_uptime_us'] / 1e6
+    print("Using TLB-centric data integration (more efficient approach)...")
 
-    # Use memory data as the reference
-    aligned_data = []
+    # Decide which TLB dataframe to use as reference (prefer one with more data)
+    reference_df = None
+    reference_name = None
 
-    # For each memory timestamp, find nearest TLB timestamps
-    for idx, mem_row in mem_df.iterrows():
-        row_data = {'time_sec': mem_row['time_sec']}
+    if dtlb_df is not None and (itlb_df is None or len(dtlb_df) > len(itlb_df)):
+        reference_df = dtlb_df
+        reference_name = "DTLB"
+    elif itlb_df is not None:
+        reference_df = itlb_df
+        reference_name = "ITLB"
+    else:
+        print("No TLB data available")
+        return None
 
-        # Add memory data
-        for col in mem_df.columns:
+    print(f"Using {reference_name} as reference with {len(reference_df)} timestamps")
+
+    # Create a function to find the most recent RSS value for a given timestamp
+    def find_most_recent_rss(timestamp):
+        mask = rss_df['time_sec'] <= timestamp
+        if not mask.any():
+            return None  # No RSS data before this timestamp
+
+        most_recent_idx = rss_df[mask]['time_sec'].idxmax()
+        return rss_df.loc[most_recent_idx]
+
+    # Create integrated dataframe
+    integrated_data = []
+    skip_count = 0
+
+    print(f"Building integrated dataset from {len(reference_df)} reference points...")
+
+    # Sample at regular intervals if there are too many rows (for performance)
+    if len(reference_df) > 10000:
+        sample_size = 10000
+        step = len(reference_df) // sample_size
+        print(f"Sampling every {step}th row from reference dataframe")
+        reference_rows = reference_df.iloc[::step]
+    else:
+        reference_rows = reference_df
+
+    for idx, tlb_row in reference_rows.iterrows():
+        # Find most recent RSS data
+        rss_row = find_most_recent_rss(tlb_row['time_sec'])
+
+        if rss_row is None:
+            skip_count += 1
+            continue
+
+        # Create integrated row
+        row_data = {'time_sec': tlb_row['time_sec']}
+
+        # Add TLB data
+        for col in reference_df.columns:
             if col != 'time_sec' and col != 'ts_uptime_us':
-                row_data[f'memory_{col}'] = mem_row[col]
+                row_data[f'{reference_name.lower()}_{col}'] = tlb_row[col]
 
-        # Add DTLB data if available
-        if dtlb_df is not None:
-            # Find closest DTLB timestamp
-            if 'time_sec' in dtlb_df.columns:
-                nearest_idx = (dtlb_df['time_sec'] - mem_row['time_sec']).abs().idxmin()
-                dtlb_row = dtlb_df.loc[nearest_idx]
-
-                # Add DTLB columns
-                for col in dtlb_df.columns:
-                    if col != 'time_sec' and col != 'ts_uptime_us':
-                        row_data[f'dtlb_{col}'] = dtlb_row[col]
-
-        # Add ITLB data if available
-        if itlb_df is not None:
+        # Add the other TLB data if available
+        if reference_name == "DTLB" and itlb_df is not None:
             # Find closest ITLB timestamp
-            if 'time_sec' in itlb_df.columns:
-                nearest_idx = (itlb_df['time_sec'] - mem_row['time_sec']).abs().idxmin()
-                itlb_row = itlb_df.loc[nearest_idx]
+            closest_itlb_idx = (itlb_df['time_sec'] - tlb_row['time_sec']).abs().idxmin()
+            itlb_row = itlb_df.loc[closest_itlb_idx]
+            time_diff = abs(itlb_row['time_sec'] - tlb_row['time_sec'])
 
-                # Add ITLB columns
+            # Only add if reasonably close (within 1 second)
+            if time_diff < 1.0:
                 for col in itlb_df.columns:
                     if col != 'time_sec' and col != 'ts_uptime_us':
                         row_data[f'itlb_{col}'] = itlb_row[col]
 
-        aligned_data.append(row_data)
+        elif reference_name == "ITLB" and dtlb_df is not None:
+            # Find closest DTLB timestamp
+            closest_dtlb_idx = (dtlb_df['time_sec'] - tlb_row['time_sec']).abs().idxmin()
+            dtlb_row = dtlb_df.loc[closest_dtlb_idx]
+            time_diff = abs(dtlb_row['time_sec'] - tlb_row['time_sec'])
 
-    # Create aligned dataframe
-    aligned_df = pd.DataFrame(aligned_data)
-    print(f"Created aligned dataframe with {len(aligned_df)} rows and {len(aligned_df.columns)} columns")
+            # Only add if reasonably close (within 1 second)
+            if time_diff < 1.0:
+                for col in dtlb_df.columns:
+                    if col != 'time_sec' and col != 'ts_uptime_us':
+                        row_data[f'dtlb_{col}'] = dtlb_row[col]
 
-    return aligned_df
+        # Add RSS data
+        for col in rss_df.columns:
+            if col != 'time_sec' and col != 'ts_ns':
+                row_data[f'rss_{col}'] = rss_row[col]
 
-def simple_lstm_model(input_shape):
-    """
-    Create a simple LSTM model suitable for small datasets
-    """
-    model = Sequential([
-        LSTM(16, activation='relu', input_shape=input_shape),
-        Dropout(0.2),
-        Dense(1)
-    ])
+        integrated_data.append(row_data)
 
-    model.compile(optimizer='adam', loss='mse')
-    model.summary()
-    return model
+    print(f"Skipped {skip_count} rows with no matching RSS data")
+
+    # Create dataframe
+    integrated_df = pd.DataFrame(integrated_data)
+    print(f"Created integrated dataframe with {len(integrated_df)} rows and {len(integrated_df.columns)} columns")
+
+    return integrated_df
 
 def prepare_sequences(df, target_col, feature_cols, seq_length=5):
     """
@@ -207,6 +268,8 @@ def prepare_sequences(df, target_col, feature_cols, seq_length=5):
                 print(f"Skipping constant column: {col}")
 
     print(f"Using {len(valid_feature_cols)} features for sequence creation")
+    if valid_feature_cols:
+        print("Sample features:", valid_feature_cols[:min(5, len(valid_feature_cols))])
 
     # Scale data
     scalers = {}
@@ -241,26 +304,70 @@ def prepare_sequences(df, target_col, feature_cols, seq_length=5):
 
     return X, y, scalers, valid_feature_cols
 
+def build_lstm_model(input_shape):
+    """
+    Build an LSTM model with proper error handling for input shapes
+
+    Args:
+        input_shape: Tuple representing input shape (can be 2D or 3D)
+
+    Returns:
+        Compiled Keras model
+    """
+    print(f"Building model with input shape: {input_shape}")
+
+    # Determine feature count based on input shape
+    if len(input_shape) == 3:
+        # Input shape is (batch, seq_length, features)
+        seq_length = input_shape[1]
+        n_features = input_shape[2]
+        model_input_shape = (seq_length, n_features)
+    elif len(input_shape) == 2:
+        # Input shape is (seq_length, features)
+        seq_length = input_shape[0]
+        n_features = input_shape[1]
+        model_input_shape = input_shape
+    else:
+        raise ValueError(f"Unexpected input shape: {input_shape}")
+
+    # Set unit count based on feature count
+    unit_count = min(32, max(8, n_features * 2))
+    print(f"Using {unit_count} LSTM units for {n_features} features")
+
+
+    model = Sequential([
+        LSTM(unit_count, activation='relu', input_shape=model_input_shape),
+        Dropout(0.2),
+        Dense(1)
+    ])
+
+    model.compile(optimizer='adam', loss='mse')
+    model.summary()
+    return model
+
 def main():
     """
-    Main function to run the simplified model
+    Main function to run the RSS-TLB model
     """
     try:
         # Define file paths
-        memory_file = "data/curated/memory_usage/7023d8d9-b86c-4de1-804a-a96072c1a360.gap.parquet"
-        dtlb_file = "data/curated/dtlb_misses/7023d8d9-b86c-4de1-804a-a96072c1a360.gap.parquet"
-        itlb_file = "data/curated/itlb_misses/7023d8d9-b86c-4de1-804a-a96072c1a360.gap.parquet"
+        rss_file = "data/curated/mm_rss_stat/5b943464-162d-41d0-a841-4a89a360daf3.gap.parquet"
+        dtlb_file = "data/curated/dtlb_misses/5b943464-162d-41d0-a841-4a89a360daf3.gap.parquet"
+        itlb_file = "data/curated/itlb_misses/5b943464-162d-41d0-a841-4a89a360daf3.gap.parquet"
 
         # 1. Load data sources
-        mem_df = load_single_data_source(memory_file, "memory")
+        rss_df = load_single_data_source(rss_file, "RSS")
         dtlb_df = load_single_data_source(dtlb_file, "DTLB")
         itlb_df = load_single_data_source(itlb_file, "ITLB")
 
-        if mem_df is None:
-            raise ValueError("Memory data is required but not found")
+        if rss_df is None:
+            raise ValueError("RSS data is required but not found")
 
         # 2. Process each data source
-        mem_df, target_col, memory_features = process_memory_data(mem_df)
+        rss_df, target_col, rss_features = process_rss_data(rss_df)
+
+        if target_col is None:
+            raise ValueError("No suitable target column found in RSS data")
 
         tlb_features = []
         if dtlb_df is not None:
@@ -271,46 +378,51 @@ def main():
             itlb_df, itlb_features = process_tlb_data(itlb_df, "itlb")
             tlb_features.extend(itlb_features)
 
-        # 3. Align data sources by time
-        aligned_df = simple_time_align(mem_df, dtlb_df, itlb_df)
+        # 3. Integration approach: TLB-centric with most recent RSS
+        integrated_df = efficient_data_integration(rss_df, dtlb_df, itlb_df)
 
-        # Update column names for target and features after alignment
-        if target_col:
-            target_col = f"memory_{target_col}"
+        if integrated_df is None or len(integrated_df) < 10:
+            raise ValueError("Failed to create sufficient integrated dataset")
 
-        memory_features = [f"memory_{col}" for col in memory_features]
+        # 4. Update column names for target and features
+        target_col = f"rss_{target_col}"
+        rss_features = [f"rss_{col}" for col in rss_features]
 
-        # 4. Verify target column exists in aligned data
-        if target_col not in aligned_df.columns:
+        # 5. Verify target column exists in integrated data
+        if target_col not in integrated_df.columns:
             # Try to find an alternative
-            for col in aligned_df.columns:
-                if 'memory' in col and ('available' in col or 'free' in col or 'cached' in col):
-                    if aligned_df[col].std() > 0:
+            for col in integrated_df.columns:
+                if 'rss' in col and ('anon' in col or 'file' in col):
+                    if integrated_df[col].std() > 0:
                         target_col = col
                         break
 
-        if not target_col or target_col not in aligned_df.columns:
-            raise ValueError("No suitable target column found in aligned data")
+        if not target_col or target_col not in integrated_df.columns:
+            raise ValueError("Target column not found in integrated data")
 
         print(f"Final target column: {target_col}")
 
-        # 5. Prepare feature list
-        all_features = memory_features.copy()
-        for col in aligned_df.columns:
-            if 'dtlb' in col or 'itlb' in col:
-                if aligned_df[col].std() > 0:  # Only include columns with variance
-                    all_features.append(col)
+        # 6. Prepare feature list
+        all_features = []
 
-        print(f"Final feature count: {len(all_features)}")
-        print("Sample features:", all_features[:5])
+        # Add RSS features
+        for col in integrated_df.columns:
+            if 'rss_' in col and col != target_col:
+                all_features.append(col)
 
-        # 6. Prepare sequences for LSTM
-        # Use a smaller sequence length for small datasets
-        seq_length = min(5, len(aligned_df) // 3)
+        # Add TLB features
+        for col in integrated_df.columns:
+            if 'dtlb_' in col or 'itlb_' in col:
+                all_features.append(col)
+
+        print(f"Total feature count: {len(all_features)}")
+
+        # 7. Prepare sequences for LSTM
+        seq_length = min(5, len(integrated_df) // 3)
         print(f"Using sequence length of {seq_length}")
 
         X, y, scalers, valid_features = prepare_sequences(
-            aligned_df, target_col, all_features, seq_length=seq_length
+            integrated_df, target_col, all_features, seq_length=seq_length
         )
 
         # Skip model training if we don't have enough data
@@ -318,17 +430,17 @@ def main():
             print(f"Not enough data for training (only {len(X)} sequences)")
             return
 
-        # 7. Split data
+        # 8. Split data
         X_train, X_test, y_train, y_test = train_test_split(
             X, y, test_size=0.2, shuffle=False
         )
 
-        # 8. Build and train model
-        model = simple_lstm_model((X.shape[1], X.shape[2]))
+        # 9. Build and train model
+        model = build_lstm_model((X.shape[1], X.shape[2]))
 
         # Use fewer epochs for small datasets
-        epochs = min(20, len(X_train))
-        batch_size = min(4, len(X_train))
+        epochs = min(30, max(10, len(X_train) // 2))
+        batch_size = min(8, len(X_train) // 2)
 
         history = model.fit(
             X_train, y_train,
@@ -338,7 +450,7 @@ def main():
             verbose=1
         )
 
-        # 9. Evaluate model
+        # 10. Evaluate model
         y_pred = model.predict(X_test)
 
         # Calculate metrics on scaled data
@@ -359,16 +471,16 @@ def main():
         print(f"Test MSE: {mse:.2f}")
         print(f"Test RMSE: {rmse:.2f}")
 
-        # 10. Plot results
+        # 11. Plot results
         plt.figure(figsize=(10, 6))
         plt.plot(y_test_orig, label='Actual', marker='o', markersize=4)
         plt.plot(y_pred_orig, label='Predicted', marker='x', markersize=4)
-        plt.title('PageRank Memory Prediction with TLB Misses')
+        plt.title('PageRank RSS Prediction with TLB Misses')
         plt.xlabel('Time Steps')
         plt.ylabel(target_col)
         plt.legend()
         plt.grid(True, alpha=0.3)
-        plt.savefig('simple_model_predictions.png')
+        plt.savefig('rss_tlb_predictions.png')
 
         # Plot training history
         plt.figure(figsize=(8, 4))
@@ -380,23 +492,30 @@ def main():
         plt.ylabel('Loss (MSE)')
         plt.legend()
         plt.grid(True, alpha=0.3)
-        plt.savefig('simple_model_history.png')
+        plt.savefig('rss_tlb_history.png')
 
         # Save the model
-        model.save('simple_pagerank_model.h5')
-        print("Model saved as simple_pagerank_model.h5")
+        model.save('rss_tlb_model.h5')
+        print("Model saved as rss_tlb_model.h5")
 
-        # 11. Print summary with feature importance
+        # 12. Print summary with feature importance
         print("\nFinal Results:")
         print(f"Target: {target_col}")
         print(f"MSE: {mse:.2f}")
         print(f"RMSE: {rmse:.2f}")
 
-        # Check if TLB features were included
+        # List TLB and RSS features used
         tlb_features_used = [f for f in valid_features if 'tlb' in f.lower()]
         if tlb_features_used:
             print("\nTLB features included in the model:")
             for feat in tlb_features_used:
+                print(f"  - {feat}")
+
+        # Print RSS features as well
+        rss_features_used = [f for f in valid_features if 'rss' in f.lower()]
+        if rss_features_used:
+            print("\nRSS features included in the model:")
+            for feat in rss_features_used:
                 print(f"  - {feat}")
 
         return model
