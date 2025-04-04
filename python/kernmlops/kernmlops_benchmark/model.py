@@ -408,6 +408,9 @@ def main():
         # Add RSS features
         for col in integrated_df.columns:
             if 'rss_' in col and col != target_col:
+                # Exclude the non-MB version of the target
+                if col == 'rss_anon' and target_col == 'rss_anon_mb':
+                    continue
                 all_features.append(col)
 
         # Add TLB features
