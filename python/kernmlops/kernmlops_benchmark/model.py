@@ -4,15 +4,20 @@ import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 import pyarrow.parquet as pq
-import tensorflow as tf
+
+# ==== swapped from TensorFlow/Keras → PyTorch ====
+import torch
+import torch.nn as nn
+import torch.optim as optim
+from torch.utils.data import DataLoader, TensorDataset
+# ================================================
+
 from sklearn.model_selection import train_test_split
 from sklearn.preprocessing import MinMaxScaler
-from tensorflow.keras.layers import LSTM, Dense, Dropout
-from tensorflow.keras.models import Sequential
 
 # Set seeds for reproducibility
 np.random.seed(42)
-tf.random.set_seed(42)
+torch.manual_seed(42)
 
 def load_single_data_source(file_path, source_name):
     """
@@ -27,16 +32,6 @@ def load_single_data_source(file_path, source_name):
     df = table.to_pandas()
     print(f"{source_name} data shape: {df.shape}")
     print(f"{source_name} columns: {df.columns.tolist()}")
-
-    # Convert object columns to numeric if possible
-    # for col in df.columns:
-    #     if df[col].dtype == 'object':
-    #         try:
-    #             df[col] = pd.to_numeric(df[col], errors='coerce')
-    #             print(f"Converted column {col} from object to numeric")
-    #         except:
-    #             print(f"Could not convert column {col} to numeric")
-
     return df
 
 def process_rss_data(rss_df):
@@ -304,6 +299,142 @@ def prepare_sequences(df, target_col, feature_cols, seq_length=5):
 
     return X, y, scalers, valid_feature_cols
 
+# ==== PyTorch model & a thin Keras-like wrapper ====
+
+class TorchLSTMRegressor(nn.Module):
+    def __init__(self, input_size, hidden_size, dropout_p=0.2):
+        super().__init__()
+        self.lstm = nn.LSTM(
+            input_size=input_size,
+            hidden_size=hidden_size,
+            num_layers=1,
+            batch_first=True
+        )
+        self.dropout = nn.Dropout(p=dropout_p)
+        self.fc = nn.Linear(hidden_size, 1)
+
+    def forward(self, x):
+        # x: (batch, seq_len, features)
+        out, (hn, cn) = self.lstm(x)
+        # Keras LSTM(return_sequences=False) ≈ last hidden state
+        last = hn[-1]  # (batch, hidden_size)
+        last = self.dropout(last)
+        return self.fc(last)
+
+class History:
+    """Mimic Keras History object: history.history['loss'], ['val_loss']"""
+    def __init__(self):
+        self.history = {'loss': [], 'val_loss': []}
+
+class ModelWrapper:
+    """
+    Provides a Keras-like API: .fit(), .predict(), .save(), .summary()
+    """
+    def __init__(self, input_shape, unit_count):
+        # input_shape is (seq_length, n_features)
+        self.seq_length, self.n_features = input_shape
+        self.model = TorchLSTMRegressor(self.n_features, unit_count, dropout_p=0.2)
+        self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+        self.model.to(self.device)
+        self.criterion = nn.MSELoss()
+        self.optimizer = optim.Adam(self.model.parameters(), lr=1e-3)
+
+    def summary(self):
+        print(self.model)
+        total_params = sum(p.numel() for p in self.model.parameters())
+        trainable_params = sum(p.numel() for p in self.model.parameters() if p.requires_grad)
+        print(f"Total params: {total_params:,} | Trainable: {trainable_params:,}")
+
+    def _to_loader(self, X, y, batch_size, shuffle):
+        X_t = torch.tensor(X, dtype=torch.float32)
+        y_t = torch.tensor(y, dtype=torch.float32)
+        ds = TensorDataset(X_t, y_t)
+        return DataLoader(ds, batch_size=batch_size, shuffle=shuffle)
+
+    def fit(self, X_train, y_train, epochs=10, batch_size=32, validation_data=None, verbose=1):
+        history = History()
+        train_loader = self._to_loader(X_train, y_train, batch_size, shuffle=True)
+        val_loader = None
+        if validation_data is not None:
+            X_val, y_val = validation_data
+            val_loader = self._to_loader(X_val, y_val, batch_size, shuffle=False)
+
+        for epoch in range(1, epochs + 1):
+            self.model.train()
+            running = 0.0
+            n = 0
+            for xb, yb in train_loader:
+                xb = xb.to(self.device)
+                yb = yb.to(self.device)
+
+                self.optimizer.zero_grad()
+                preds = self.model(xb)  # (batch, 1)
+                loss = self.criterion(preds, yb)
+                loss.backward()
+                self.optimizer.step()
+
+                running += loss.item() * xb.size(0)
+                n += xb.size(0)
+
+            epoch_loss = running / max(1, n)
+            history.history['loss'].append(epoch_loss)
+
+            val_loss = None
+            if val_loader is not None:
+                self.model.eval()
+                v_running = 0.0
+                v_n = 0
+                with torch.no_grad():
+                    for xb, yb in val_loader:
+                        xb = xb.to(self.device)
+                        yb = yb.to(self.device)
+                        preds = self.model(xb)
+                        loss = self.criterion(preds, yb)
+                        v_running += loss.item() * xb.size(0)
+                        v_n += xb.size(0)
+                val_loss = v_running / max(1, v_n)
+                history.history['val_loss'].append(val_loss)
+
+            if verbose:
+                if val_loader is not None:
+                    print(f"Epoch {epoch}/{epochs} - loss: {epoch_loss:.6f} - val_loss: {val_loss:.6f}")
+                else:
+                    print(f"Epoch {epoch}/{epochs} - loss: {epoch_loss:.6f}")
+
+        return history
+
+    def predict(self, X):
+        self.model.eval()
+        X_t = torch.tensor(X, dtype=torch.float32).to(self.device)
+        with torch.no_grad():
+            preds = self.model(X_t).cpu().numpy()
+        return preds  # shape (n_samples, 1) matching Keras
+
+    def save(self, path):
+        """
+        Save as a PyTorch file while keeping the same call site.
+        If a .h5 filename is provided, we additionally save a .pt file next to it.
+        """
+        # Always save a .pt
+        base, ext = os.path.splitext(path)
+        pt_path = base + ".pt"
+        torch.save({
+            'state_dict': self.model.state_dict(),
+            'input_shape': (self.seq_length, self.n_features)
+        }, pt_path)
+        print(f"Model saved as {pt_path} (PyTorch)")
+
+        # Optionally export TorchScript for portability
+        example = torch.randn(1, self.seq_length, self.n_features).to(self.device)
+        traced = torch.jit.trace(self.model, example)
+        ts_path = base + ".torchscript.pt"
+        traced.save(ts_path)
+        print(f"TorchScript saved as {ts_path}")
+
+        # If user passed .h5, let them know where the PyTorch files are
+        if ext.lower() == ".h5":
+            print("Note: Keras .h5 was requested; saved PyTorch formats (.pt and .torchscript.pt) instead.")
+
 def build_lstm_model(input_shape):
     """
     Build an LSTM model with proper error handling for input shapes
@@ -312,7 +443,7 @@ def build_lstm_model(input_shape):
         input_shape: Tuple representing input shape (can be 2D or 3D)
 
     Returns:
-        Compiled Keras model
+        Keras-like model wrapper (PyTorch under the hood)
     """
     print(f"Building model with input shape: {input_shape}")
 
@@ -334,16 +465,11 @@ def build_lstm_model(input_shape):
     unit_count = min(32, max(8, n_features * 2))
     print(f"Using {unit_count} LSTM units for {n_features} features")
 
-
-    model = Sequential([
-        LSTM(unit_count, activation='relu', input_shape=model_input_shape),
-        Dropout(0.2),
-        Dense(1)
-    ])
-
-    model.compile(optimizer='adam', loss='mse')
-    model.summary()
-    return model
+    # Note: Keras LSTM(activation='relu') uses non-standard gate activations.
+    # PyTorch LSTM uses (tanh/sigmoid) internally; we approximate overall capacity.
+    wrapper = ModelWrapper(model_input_shape, unit_count)
+    wrapper.summary()
+    return wrapper
 
 def main():
     """
@@ -443,7 +569,7 @@ def main():
 
         # Use fewer epochs for small datasets
         epochs = min(30, max(10, len(X_train) // 2))
-        batch_size = min(8, len(X_train) // 2)
+        batch_size = max(1, min(8, len(X_train) // 2))
 
         history = model.fit(
             X_train, y_train,
@@ -488,7 +614,7 @@ def main():
         # Plot training history
         plt.figure(figsize=(8, 4))
         plt.plot(history.history['loss'], label='Training Loss')
-        if 'val_loss' in history.history:
+        if len(history.history['val_loss']) > 0:
             plt.plot(history.history['val_loss'], label='Validation Loss')
         plt.title('Model Training History')
         plt.xlabel('Epoch')
@@ -498,8 +624,8 @@ def main():
         plt.savefig('rss_tlb_history.png')
 
         # Save the model
-        model.save('rss_tlb_model.h5')
-        print("Model saved as rss_tlb_model.h5")
+        model.save('rss_tlb_model.h5')  # same call-site; saves .pt + .torchscript.pt
+        print("Model saved (PyTorch formats)")
 
         # 12. Print summary with feature importance
         print("\nFinal Results:")
